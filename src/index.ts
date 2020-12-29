@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import pQueue from 'p-queue';
 
 const seedNodes: string[] = [
   'xenon.blockstack.org',
@@ -18,22 +19,21 @@ interface Neighbors {
   outbound: Neighbor[];
 }
 
-async function queryNodeNeighbors(nodeUrl: string, retries = 3): Promise<Set<string>> {
+async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<Set<string>> {
   const ips = new Set<string>();
   for (let i = 0; i < retries; i++) {
     try {
       const queryUrl = `http://${nodeUrl}:20443/v2/neighbors`;
       console.log(`Querying ${queryUrl}`);
       const ac = new AbortController();
-      setTimeout(() => ac.abort(), 1500);
+      setTimeout(() => ac.abort(), 5000);
       const req = await fetch(queryUrl, { signal: ac.signal as any });
       const result: Neighbors = await req.json();
       [...result.sample, ...result.inbound, ...result.outbound].forEach(n => ips.add(n.ip));
     } catch (error) {
       console.info(`Neighbors RPC failed for ${nodeUrl}: ${error.message}`);
-      break;
       if (i < retries) {
-        await wait(500);
+        await wait(1000);
       }
     }
   }
@@ -44,6 +44,8 @@ async function queryNodeNeighbors(nodeUrl: string, retries = 3): Promise<Set<str
 async function scanNeighbors() {
   const foundIps = new Set<string>();
   const queriedIps = new Set<string>();
+
+  const requestQueue = new pQueue({concurrency: 250});
 
   const getIpsToQuery = () => {
     const ips = new Set<string>();
@@ -57,15 +59,20 @@ async function scanNeighbors() {
 
   seedNodes.forEach(n => foundIps.add(n));
 
-  // let ipsToQuery = getIpsToQuery();
-  let ipsToQuery: Set<string>;
-  while ((ipsToQuery = getIpsToQuery()).size > 0) {
-    for (const ip of ipsToQuery) {
+  const queueQueries = () => {
+    getIpsToQuery().forEach(ip => {
       queriedIps.add(ip);
-      const results = await queryNodeNeighbors(ip);
-      results.forEach(n => foundIps.add(n));
-    }
-  }
+      requestQueue.add(async () => {
+        const results = await queryNodeNeighbors(ip);
+        results.forEach(n => foundIps.add(n));
+        queueQueries();
+      });
+    });
+  };
+
+  queueQueries();
+
+  await requestQueue.onIdle();
 
   seedNodes.forEach(n => foundIps.delete(n));
 
