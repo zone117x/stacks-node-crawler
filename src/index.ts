@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import pQueue from 'p-queue';
+import * as geoipCountry from 'geoip-country';
 
 const seedNodes: string[] = [
   'xenon.blockstack.org',
@@ -90,6 +91,19 @@ async function scanNeighbors() {
   console.log(`Found ${foundIps.size} nodes, ${responsiveIps.size} with public RPC`);
   console.log(`Public nodes:\n${[...responsiveIps].sort().join('\n')}`);
   console.log([...foundIps]);
+
+  const countries = new Map<string, number>();
+  foundIps.forEach(ip => {
+    const result = geoipCountry.lookup(ip)
+    const country = result?.country ?? '??';
+    let count = countries.get(country) ?? 0;
+    countries.set(country, ++count);
+  });
+
+  const countryEntries = [...countries.entries()].sort((a, b) => b[1] - a[1]);
+  const countrySummary = countryEntries.map(e => `${e[0]} ${e[1]}`).join('\n');
+  console.log(`Results by country:\nCountry, Node Count`);
+  console.log(countrySummary);
 }
 
 scanNeighbors().catch(error => {
