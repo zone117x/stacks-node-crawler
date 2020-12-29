@@ -19,8 +19,14 @@ interface Neighbors {
   outbound: Neighbor[];
 }
 
-async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<Set<string>> {
+interface QueryResult {
+  responsive: boolean;
+  neighbors: Set<string>;
+}
+
+async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<QueryResult> {
   const ips = new Set<string>();
+  let responsive = false;
   for (let i = 0; i < retries; i++) {
     try {
       const queryUrl = `http://${nodeUrl}:20443/v2/neighbors`;
@@ -29,6 +35,7 @@ async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<Set<str
       setTimeout(() => ac.abort(), 5000);
       const req = await fetch(queryUrl, { signal: ac.signal as any });
       const result: Neighbors = await req.json();
+      responsive = true;
       [...result.sample, ...result.inbound, ...result.outbound].forEach(n => ips.add(n.ip));
     } catch (error) {
       console.info(`Neighbors RPC failed for ${nodeUrl}: ${error.message}`);
@@ -38,11 +45,12 @@ async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<Set<str
     }
   }
   console.log(`Node ${nodeUrl} has ${ips.size} neighbors`);
-  return ips;
+  return { neighbors: ips, responsive };
 }
 
 async function scanNeighbors() {
   const foundIps = new Set<string>();
+  const responsiveIps = new Set<string>();
   const queriedIps = new Set<string>();
 
   const requestQueue = new pQueue({concurrency: 250});
@@ -63,8 +71,11 @@ async function scanNeighbors() {
     getIpsToQuery().forEach(ip => {
       queriedIps.add(ip);
       requestQueue.add(async () => {
-        const results = await queryNodeNeighbors(ip);
-        results.forEach(n => foundIps.add(n));
+        const result = await queryNodeNeighbors(ip);
+        if (result.responsive) {
+          responsiveIps.add(ip);
+        }
+        result.neighbors.forEach(n => foundIps.add(n));
         queueQueries();
       });
     });
@@ -76,9 +87,9 @@ async function scanNeighbors() {
 
   seedNodes.forEach(n => foundIps.delete(n));
 
-  console.log(`Found ${foundIps.size} nodes:`);
+  console.log(`Found ${foundIps.size} nodes, ${responsiveIps.size} with public RPC`);
+  console.log(`Public nodes:\n${[...responsiveIps].sort().join('\n')}`);
   console.log([...foundIps]);
-
 }
 
 scanNeighbors().catch(error => {
