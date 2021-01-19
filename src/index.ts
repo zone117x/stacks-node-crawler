@@ -1,9 +1,13 @@
 import fetch from 'node-fetch';
 import pQueue from 'p-queue';
 import * as geoipCountry from 'geoip-country';
+import AbortController from "abort-controller";
 
 const seedNodes: string[] = [
-  'xenon.blockstack.org',
+  'stacks-node-api.mainnet.stacks.co',
+  'seed-0.mainnet.stacks.co:20443',
+  'seed-1.mainnet.stacks.co:20443',
+  'seed-2.mainnet.stacks.co:20443',
 ];
 
 function wait(ms: number): Promise<void> {
@@ -25,23 +29,34 @@ interface QueryResult {
   neighbors: Set<string>;
 }
 
-async function queryNodeNeighbors(nodeUrl: string, retries = 5): Promise<QueryResult> {
+const RPC_PORT = 20443;
+
+function getQueryUrls(nodeUrl: string): string[] {
+  return [...new Set([
+    nodeUrl,
+    `${nodeUrl}:${RPC_PORT}`
+  ])];
+}
+
+async function queryNodeNeighbors(nodeUrl: string, retries = 8): Promise<QueryResult> {
   const ips = new Set<string>();
   let responsive = false;
-  for (let i = 0; i < retries; i++) {
-    try {
-      const queryUrl = `http://${nodeUrl}:20443/v2/neighbors`;
-      console.log(`Querying ${queryUrl}`);
-      const ac = new AbortController();
-      setTimeout(() => ac.abort(), 5000);
-      const req = await fetch(queryUrl, { signal: ac.signal as any });
-      const result: Neighbors = await req.json();
-      responsive = true;
-      [...result.sample, ...result.inbound, ...result.outbound].forEach(n => ips.add(n.ip));
-    } catch (error) {
-      console.info(`Neighbors RPC failed for ${nodeUrl}: ${error.message}`);
-      if (i < retries) {
-        await wait(1000);
+  for (const queryUrl of getQueryUrls(nodeUrl)) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const queryNeighborsUrl = `http://${queryUrl}/v2/neighbors`;
+        console.log(`Querying ${queryNeighborsUrl}`);
+        const ac = new AbortController();
+        setTimeout(() => ac.abort(), 15000);
+        const req = await fetch(queryNeighborsUrl, { signal: ac.signal as any });
+        const result: Neighbors = await req.json();
+        responsive = true;
+        [...result.sample, ...result.inbound, ...result.outbound].forEach(n => ips.add(n.ip));
+      } catch (error) {
+        console.info(`Neighbors RPC failed for ${nodeUrl}: ${error.message}`);
+        if (i < retries) {
+          await wait(1500);
+        }
       }
     }
   }
@@ -86,11 +101,18 @@ async function scanNeighbors() {
 
   await requestQueue.onIdle();
 
-  seedNodes.forEach(n => foundIps.delete(n));
+  seedNodes.map(n => getQueryUrls(n)).flat().forEach(n => {
+    foundIps.delete(n);
+    responsiveIps.delete(n);
+  });
 
+  console.log('-------');
+  console.log('IPs:');  
+  console.log(`Total nodes:\n${[...responsiveIps].sort().join('\n')}`);
+  console.log([...foundIps].sort().join('\n'));
+  console.log('Public nodes:');
+  console.log([...responsiveIps].sort().join('\n'));
   console.log(`Found ${foundIps.size} nodes, ${responsiveIps.size} with public RPC`);
-  console.log(`Public nodes:\n${[...responsiveIps].sort().join('\n')}`);
-  console.log([...foundIps]);
 
   const countries = new Map<string, number>();
   foundIps.forEach(ip => {
@@ -101,7 +123,7 @@ async function scanNeighbors() {
   });
 
   const countryEntries = [...countries.entries()].sort((a, b) => b[1] - a[1]);
-  const countrySummary = countryEntries.map(e => `${e[0]} ${e[1]}`).join('\n');
+  const countrySummary = countryEntries.map(e => `${e[0]} ${e[1]}`).join(', ');
   console.log(`Results by country:\nCountry, Node Count`);
   console.log(countrySummary);
 }
