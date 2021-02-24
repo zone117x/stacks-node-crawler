@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 import pQueue from 'p-queue';
 import * as geoipCountry from 'geoip-country';
 import AbortController from "abort-controller";
+import { Address4 } from 'ip-address';
 
 const seedNodes: string[] = [
   'stacks-node-api.mainnet.stacks.co',
@@ -38,7 +39,7 @@ function getQueryUrls(nodeUrl: string): string[] {
   ])];
 }
 
-async function queryNodeNeighbors(nodeUrl: string, retries = 8): Promise<QueryResult> {
+async function queryNodeNeighbors(nodeUrl: string, retries = 16): Promise<QueryResult> {
   const ips = new Set<string>();
   let responsive = false;
   for (const queryUrl of getQueryUrls(nodeUrl)) {
@@ -105,13 +106,25 @@ async function scanNeighbors() {
     foundIps.delete(n);
     responsiveIps.delete(n);
   });
+  foundIps.delete('0.0.0.0');
+  
+  const privateNetworks = [...foundIps].map(ip => new Address4(ip));
+  const ipSubnetClassA = new Address4('10.0.0.0/8');
+  const ipSubnetClassB = new Address4('172.16.0.0/12');
+  const ipSubnetClassC = new Address4('192.168.0.0/16');
+  const privateIps = privateNetworks
+    .filter(ip => ip.isInSubnet(ipSubnetClassA) || ip.isInSubnet(ipSubnetClassB) || ip.isInSubnet(ipSubnetClassC))
+    .map(ip => ip.address);
 
   console.log('-------');
   console.log('IPs:');  
-  console.log(`Total nodes:\n${[...responsiveIps].sort().join('\n')}`);
   console.log([...foundIps].sort().join('\n'));
+  console.log('-------');
   console.log('Public nodes:');
   console.log([...responsiveIps].sort().join('\n'));
+  console.log('-------');
+  console.log(`Private IPs: ${privateIps.length}`);
+  console.log(`Total nodes:\n${[...responsiveIps].sort().join('\n')}`);
   console.log(`Found ${foundIps.size} nodes, ${responsiveIps.size} with public RPC`);
 
   const countries = new Map<string, number>();

@@ -16,6 +16,7 @@
     "@types/node-fetch": "^2.5.7",
     "abort-controller": "^3.0.0",
     "geoip-country": "^4.0.48",
+    "ip-address": "^7.1.0",
     "node-fetch": "^2.6.1",
     "p-queue": "^6.6.2",
     "ts-node": "^9.1.1",
